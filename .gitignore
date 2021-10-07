@@ -23,3 +23,9 @@ project/plugins/project/
 .history
 .cache
 .lib/
+
+# Metals
+.metals/
+.bloop/
+.ammonite/
+metals.sbt
