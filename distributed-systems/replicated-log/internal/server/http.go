@@ -1,21 +1,30 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
+	"sync"
 
 	"github.com/gorilla/mux"
 )
 
+var slaves = []string{
+	"http://localhost:9001/internal/post",
+	"http://localhost:9002/internal/post",
+}
+
 // START: newhttpserver
 func NewHTTPServer(addr string, serverType string) *http.Server {
-	httpsrv := newHTTPServer()
+	httpsrv := newHTTPServer(serverType)
 	r := mux.NewRouter()
-	switch serverType {
+	switch httpsrv.ServerType {
 	case "master":
 		r.HandleFunc("/", httpsrv.handleProduce).Methods("POST")
 	case "slave":
-		//r.HandleFunc("/internal/", httpsrv.handleProduce).Methods("POST")
+		r.HandleFunc("/internal/post", httpsrv.handleProduce).Methods("POST")
 	}
 	r.HandleFunc("/", httpsrv.handleConsume).Methods("GET")
 	return &http.Server{
@@ -28,12 +37,14 @@ func NewHTTPServer(addr string, serverType string) *http.Server {
 
 // START: types
 type httpServer struct {
-	Log *Log
+	Log        *Log
+	ServerType string
 }
 
-func newHTTPServer() *httpServer {
+func newHTTPServer(serverType string) *httpServer {
 	return &httpServer{
-		Log: NewLog(),
+		Log:        NewLog(),
+		ServerType: serverType,
 	}
 }
 
@@ -53,17 +64,41 @@ type ConsumeResponse struct {
 
 // START:produce
 func (s *httpServer) handleProduce(w http.ResponseWriter, r *http.Request) {
-	var req ProduceRequest
-	err := json.NewDecoder(r.Body).Decode(&req)
+	var record Record
+	var respErrors []error
+	var wg sync.WaitGroup
+
+	e := make(chan error)
+
+	err := json.NewDecoder(r.Body).Decode(&record)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	record, err := s.Log.Append(req.Record)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	record, _ = s.Log.AddOffset(record)
+
+	if s.ServerType == "master" {
+		for _, url := range slaves {
+			wg.Add(1)
+			go s.replicateProduce(url, record, e, &wg)
+		}
+		// Close the channel in the background.
+		go func() {
+			wg.Wait()
+			close(e)
+		}()
+		// Read from error (e) channel as they come in until its closed.
+		for respError := range e {
+			respErrors = append(respErrors, respError)
+		}
+		for _, err := range respErrors {
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
 	}
+	s.Log.Append(record)
 	res := ProduceResponse{Offset: record.Offset}
 	err = json.NewEncoder(w).Encode(res)
 	if err != nil {
@@ -73,6 +108,29 @@ func (s *httpServer) handleProduce(w http.ResponseWriter, r *http.Request) {
 }
 
 // END:produce
+
+// START:replicateProduce
+func (s *httpServer) replicateProduce(url string, record Record, errChan chan<- error, wg *sync.WaitGroup) {
+	defer wg.Done()
+	jsonValue, _ := json.Marshal(record)
+	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonValue))
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Println(err)
+		errChan <- err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		errChan <- errors.New(resp.Status)
+	}
+	errChan <- nil
+}
+
+// END:replicateProduce
 
 // START:consume
 func (s *httpServer) handleConsume(w http.ResponseWriter, r *http.Request) {

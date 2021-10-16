@@ -13,12 +13,15 @@ func NewLog() *Log {
 	return &Log{}
 }
 
-func (c *Log) Append(record Record) (uint64, error) {
+func (c *Log) AddOffset(record Record) (Record, error) {
+	record.Offset = uint64(len(c.records))
+	return record, nil
+}
+
+func (c *Log) Append(record Record) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	record.Offset = uint64(len(c.records))
 	c.records = append(c.records, record)
-	return record.Offset, nil
 }
 
 func (c *Log) Read() ([]Record, error) {
