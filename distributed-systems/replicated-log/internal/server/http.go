@@ -1,4 +1,3 @@
-// START: newhttpserver
 package server
 
 import (
@@ -8,10 +7,16 @@ import (
 	"github.com/gorilla/mux"
 )
 
-func NewHTTPServer(addr string) *http.Server {
+// START: newhttpserver
+func NewHTTPServer(addr string, serverType string) *http.Server {
 	httpsrv := newHTTPServer()
 	r := mux.NewRouter()
-	r.HandleFunc("/", httpsrv.handleProduce).Methods("POST")
+	switch serverType {
+	case "master":
+		r.HandleFunc("/", httpsrv.handleProduce).Methods("POST")
+	case "slave":
+		//r.HandleFunc("/internal/", httpsrv.handleProduce).Methods("POST")
+	}
 	r.HandleFunc("/", httpsrv.handleConsume).Methods("GET")
 	return &http.Server{
 		Addr:    addr,
@@ -40,12 +45,8 @@ type ProduceResponse struct {
 	Offset uint64 `json:"offset"`
 }
 
-type ConsumeRequest struct {
-	Offset uint64 `json:"offset"`
-}
-
 type ConsumeResponse struct {
-	Record []Record `json:"record"`
+	Records []Record `json:"records"`
 }
 
 // END:types
@@ -58,12 +59,12 @@ func (s *httpServer) handleProduce(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	off, err := s.Log.Append(req.Record)
+	record, err := s.Log.Append(req.Record)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	res := ProduceResponse{Offset: off}
+	res := ProduceResponse{Offset: record.Offset}
 	err = json.NewEncoder(w).Encode(res)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -75,22 +76,12 @@ func (s *httpServer) handleProduce(w http.ResponseWriter, r *http.Request) {
 
 // START:consume
 func (s *httpServer) handleConsume(w http.ResponseWriter, r *http.Request) {
-	//var req ConsumeRequest
-	//err := json.NewDecoder(r.Body).Decode(&req)
-	//if err != nil {
-	//	http.Error(w, err.Error(), http.StatusBadRequest)
-	//	return
-	//}
 	records, err := s.Log.Read()
-	//if err == ErrOffsetNotFound {
-	//	http.Error(w, err.Error(), http.StatusNotFound)
-	//	return
-	//}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	res := ConsumeResponse{Record: records}
+	res := ConsumeResponse{Records: records}
 	err = json.NewEncoder(w).Encode(res)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
