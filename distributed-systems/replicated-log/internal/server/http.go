@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"math/rand"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gorilla/mux"
 )
@@ -77,7 +79,8 @@ func (s *httpServer) handleProduce(w http.ResponseWriter, r *http.Request) {
 	}
 	record, _ = s.Log.AddOffset(record)
 
-	if s.ServerType == "master" {
+	switch s.ServerType {
+	case "master":
 		for _, url := range slaves {
 			wg.Add(1)
 			go s.replicateProduce(url, record, e, &wg)
@@ -97,6 +100,8 @@ func (s *httpServer) handleProduce(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	case "slave":
+		time.Sleep(time.Duration(rand.Intn(10)) * time.Second)
 	}
 	s.Log.Append(record)
 	res := ProduceResponse{Offset: record.Offset}
