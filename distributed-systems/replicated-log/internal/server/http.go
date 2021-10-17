@@ -12,8 +12,8 @@ import (
 )
 
 var slaves = []string{
-	"http://localhost:9001/internal/post",
-	"http://localhost:9002/internal/post",
+	"http://slave1:9001/internal/post",
+	"http://slave2:9001/internal/post",
 }
 
 // START: newhttpserver
